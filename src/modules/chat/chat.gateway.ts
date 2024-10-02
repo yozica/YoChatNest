@@ -50,4 +50,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     this.chatService.joinRoom(client, body.nickname, body.roomNumber);
   }
+
+  // 监听客户端发来的消息
+  @SubscribeMessage('onClientSendMessage')
+  onClientSendMessage(
+    @MessageBody()
+    body: { message: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    this.chatService.receiveClientMessage(client, body.message);
+  }
 }

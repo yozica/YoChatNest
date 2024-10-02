@@ -9,8 +9,9 @@ import type { ChatCacheType } from 'src/types/chat';
 export class ChatService {
   constructor() {}
 
-  clientAliases = new Map<string, string>(); // 用于存储 实例id 和 实例别名 的映射
+  // clientAliases = new Map<string, string>(); // 用于存储 实例id 和 实例别名 的映射
   chatCache = new Map<string, ChatCacheType[]>(); // 用于存储 房间 和 房间内聊天信息 的映射
+  roomCache = new Map<string, Map<string, string>>(); // 用于存储 房间 和 房间内成员信息 的映射，其中成员信息是 实例id 和实例别名 的映射
 
   // 生成随机房间号，规则: 6位整数，第一位不能为0
   generateRandomNumber() {
@@ -50,11 +51,15 @@ export class ChatService {
       return;
     }
     YoLog.clientAction(client.id, '创建新的聊天室: ' + roomNumber);
-    this.clientAliases.set(client.id, nickname); // 缓存实例id与用户名
-    this.chatCache.set(roomNumber, []);
+    this.chatCache.set(roomNumber, []); // 定义房间聊天信息存放位置
+    // 缓存实例id与用户名
+    const clientAliases = new Map();
+    clientAliases.set(client.id, nickname);
+    this.roomCache.set(roomNumber, clientAliases); // 将实例id与用户名存放于房间信息内
     client.join(roomNumber);
     YoLog.roomAction(roomNumber, '聊天室创建成功');
     this.chatCache.get(roomNumber).push({
+      id: this.chatCache.get(roomNumber).length,
       clientId: client.id,
       nickname: nickname,
       type: 'userAction',
@@ -76,8 +81,8 @@ export class ChatService {
 
   // 加入聊天室
   joinRoom(client: Socket, nickname: string, roomNumber: string) {
-    const roomExists = client.nsp.adapter.rooms.has(roomNumber);
-    if (!roomExists) {
+    // 判断房间号是否存在
+    if (!client.nsp.adapter.rooms.has(roomNumber)) {
       send(client, 'onJoinRoomRes', {
         code: 404,
         desc: '该房间号不存在',
@@ -90,14 +95,32 @@ export class ChatService {
       );
       return;
     }
+    // 判断要加入的房间内是否已有该用户名
+    if (
+      Array.from(this.roomCache.get(roomNumber).values()).includes(nickname)
+    ) {
+      send(client, 'onJoinRoomRes', {
+        code: 400,
+        desc: '该房间内该昵称已被占用',
+        data: null,
+      });
+      YoLog.clientAction(
+        client.id,
+        `加入聊天室(${roomNumber})失败，因为昵称已被占用`,
+        'error',
+      );
+      return;
+    }
     client.join(roomNumber); // 将该实例加入房间
-    this.chatCache.get(roomNumber).push({
+    const item: ChatCacheType = {
+      id: this.chatCache.get(roomNumber).length,
       clientId: client.id,
       nickname: nickname,
       type: 'userAction',
       time: timeFormat(new Date().getTime(), 'YYYY-MM-DD hh:mm:ss'),
       data: '加入了聊天室',
-    });
+    };
+    this.chatCache.get(roomNumber).push(item);
     // 通知实例加入成功
     send(client, 'onJoinRoomRes', {
       code: 200,
@@ -113,13 +136,10 @@ export class ChatService {
     sendBroadcast(client, roomNumber, 'onNewUserJoin', {
       code: 200,
       desc: '',
-      data: {
-        clientId: client.id,
-        nickname,
-      },
+      data: item,
     });
     // 缓存实例id与用户名
-    this.clientAliases.set(client.id, nickname);
+    this.roomCache.get(roomNumber).set(client.id, nickname);
     YoLog.clientAction(client.id, `加入了聊天室(${roomNumber})`);
   }
 
@@ -127,22 +147,65 @@ export class ChatService {
   clientOff(client: Socket) {
     const rooms = Array.from(client.rooms);
     if (rooms.length <= 1) return;
-    const room = rooms[1];
+    const roomNumber = rooms[1];
+    const nickname = this.roomCache.get(roomNumber).get(client.id);
     // 通知聊天室该实例离线
-    send(client, 'onUserOff', {
+    const item: ChatCacheType = {
+      id: this.chatCache.get(roomNumber).length,
+      clientId: client.id,
+      nickname: nickname,
+      type: 'userAction',
+      data: '离开了聊天室',
+      time: timeFormat(new Date().getTime(), 'YYYY-MM-DD hh:mm:ss'),
+    };
+    this.chatCache.get(roomNumber).push(item);
+    this.roomCache.get(roomNumber).delete(client.id);
+    sendBroadcast(client, roomNumber, 'onUserOff', {
       code: 200,
       desc: '',
-      data: {
-        clientId: client.id,
-        nickname: this.clientAliases.get(client.id),
-      },
+      data: item,
     });
-    YoLog.clientAction(client.id, `客户端离开了聊天室: ${room}`);
-    const numberNum = client.nsp.adapter.rooms.get(room)?.size;
+    YoLog.clientAction(client.id, `客户端离开了聊天室: ${roomNumber}`);
+    const numberNum = client.nsp.adapter.rooms.get(roomNumber)?.size;
     if (numberNum === 1) {
-      YoLog.clientAction(client.id, `是聊天室(${room})的最后一个实例`);
-      this.chatCache.delete(room);
-      YoLog.roomAction(room, '聊天室已解散');
+      YoLog.clientAction(client.id, `是聊天室(${roomNumber})的最后一个实例`);
+      this.chatCache.delete(roomNumber);
+      this.roomCache.delete(roomNumber);
+      YoLog.roomAction(roomNumber, '聊天室已解散');
     }
+  }
+
+  // 接收客户端发来的消息
+  receiveClientMessage(client: Socket, message: string) {
+    const roomNumber = Array.from(client.rooms)[1];
+    const nickname = this.roomCache.get(roomNumber).get(client.id);
+    if (!roomNumber) {
+      send(client, 'confirmSendMessageOK', {
+        code: 400,
+        desc: '聊天室错误，信息发送失败',
+        data: null,
+      });
+      YoLog.clientAction(client.id, `聊天室(${roomNumber})异常丢失`, 'error');
+      return;
+    }
+    const item: ChatCacheType = {
+      id: this.chatCache.get(roomNumber).length,
+      clientId: client.id,
+      nickname,
+      type: 'text',
+      data: message,
+      time: timeFormat(new Date().getTime(), 'YYYY-MM-DD hh:mm:ss'),
+    };
+    this.chatCache.get(roomNumber).push(item);
+    sendBroadcast(client, roomNumber, 'receiveClientMessageRes', {
+      code: 200,
+      desc: '',
+      data: item,
+    });
+    send(client, 'confirmSendMessageOK', {
+      code: 200,
+      desc: '',
+      data: item,
+    });
   }
 }
