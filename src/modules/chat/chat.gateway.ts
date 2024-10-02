@@ -14,6 +14,8 @@ import YoLog from 'src/utils/yoLog';
   cors: {
     origin: '*',
   },
+  transports: ['websocket'],
+  secure: true,
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(private readonly chatService: ChatService) {}
