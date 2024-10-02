@@ -8,6 +8,10 @@
       {
         "include": "wwwroot/**/*",
         "watchAssets": true
+      },
+      {
+        "include": "https/**/*",
+        "watchAssets": true
       }
     ]
   }
