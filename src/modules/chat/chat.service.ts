@@ -176,9 +176,12 @@ export class ChatService {
   }
 
   // 接收客户端发来的消息
-  receiveClientMessage(client: Socket, message: string) {
+  receiveClientMessage(
+    client: Socket,
+    message: string,
+    type: ChatCacheType['type'],
+  ) {
     const roomNumber = Array.from(client.rooms)[1];
-    const nickname = this.roomCache.get(roomNumber).get(client.id);
     if (!roomNumber) {
       send(client, 'confirmSendMessageOK', {
         code: 400,
@@ -188,11 +191,12 @@ export class ChatService {
       YoLog.clientAction(client.id, `聊天室(${roomNumber})异常丢失`, 'error');
       return;
     }
+    const nickname = this.roomCache.get(roomNumber).get(client.id);
     const item: ChatCacheType = {
       id: this.chatCache.get(roomNumber).length,
       clientId: client.id,
       nickname,
-      type: 'text',
+      type: type,
       data: message,
       time: timeFormat(new Date().getTime(), 'YYYY-MM-DD hh:mm:ss'),
     };

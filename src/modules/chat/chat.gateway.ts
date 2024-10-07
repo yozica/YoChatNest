@@ -9,13 +9,12 @@ import {
 import { Socket } from 'socket.io';
 import { ChatService } from './chat.service';
 import YoLog from 'src/utils/yoLog';
+import type { ChatCacheType } from 'src/types/chat';
 
 @WebSocketGateway({
   cors: {
     origin: '*',
   },
-  transports: ['websocket'],
-  secure: true,
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(private readonly chatService: ChatService) {}
@@ -57,9 +56,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('onClientSendMessage')
   onClientSendMessage(
     @MessageBody()
-    body: { message: string },
+    body: { message: string; type?: ChatCacheType['type'] },
     @ConnectedSocket() client: Socket,
   ) {
-    this.chatService.receiveClientMessage(client, body.message);
+    if (!body.type) {
+      body.type = 'text';
+    }
+    this.chatService.receiveClientMessage(client, body.message, body.type);
   }
 }
